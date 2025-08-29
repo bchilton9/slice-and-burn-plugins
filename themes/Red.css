@@ -1,0 +1,10 @@
+:root {
+  --bg:#1a0d0d; --fg:#ffe0e0; --muted:#a98f8f;
+  --accent:#ef4444; --accent-dark:#7f1d1d;
+  --bar-bg:#2b1414; --bar-fg:#e6e6e6;
+  --line:#331919; --panel:#261212;
+
+  --tab-bg:#331a1a; --tab-border:#402626; --tab-fg:#e6e6e6;
+  --tab-active-bg:#4a2020; --tab-active-border:#ef4444; --tab-active-fg:#fff;
+  --input-bg:#221010;
+}

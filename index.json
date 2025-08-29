@@ -1,0 +1,19 @@
+{
+  "plugins": [
+    {
+      "id": "octoprint",
+      "name": "OctoPrint",
+      "description": "Send G-code directly to OctoPrint instances.",
+      "icon": "plugins/octoprint/icon.png",
+      "script": "plugins/octoprint/plugin.js",
+      "details": "plugins/octoprint/description.md",
+      "version": "1.0.0",
+      "requires": []
+    }
+  ],
+  "themes": [
+    { "name": "Blue.css",  "path": "themes/Blue.css"  },
+    { "name": "Green.css", "path": "themes/Green.css" },
+    { "name": "Gold.css",  "path": "themes/Gold.css"  }
+  ]
+}
