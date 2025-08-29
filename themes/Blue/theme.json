@@ -1,0 +1,11 @@
+{
+  "id": "Blue",
+  "name": "Blue",
+  "version": "1.0.0",
+  "author": "ChilSoft",
+  "license": "MIT",
+  "summary": "Cool blues with bright accents.",
+  "preview": "themes/Blue/preview.png",
+  "css": "themes/Blue/theme.css",
+  "details": "themes/Blue/README.md"
+}

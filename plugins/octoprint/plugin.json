@@ -1,0 +1,22 @@
+{
+  "id": "octoprint",
+  "name": "OctoPrint",
+  "version": "1.0.0",
+  "author": "ChilSoft",
+  "license": "MIT",
+  "homepage": "https://octoprint.org/",
+  "categories": ["Integration", "Printing"],
+  "description": "Send G-code directly to OctoPrint instances. Supports multiple printers and API keys.",
+  "icon": "plugins/octoprint/icon.png",
+  "details": "plugins/octoprint/description.md",
+  "script": "plugins/octoprint/plugin.js",
+  "requires": [],
+  "settingsSchema": {
+    "title": "OctoPrint",
+    "fields": [
+      { "key": "instances", "label": "Instances (list)", "type": "string", "default": "" },
+      { "key": "defaultInstance", "label": "Default Instance", "type": "string", "default": "" },
+      { "key": "autoUpload", "label": "Auto-upload after export", "type": "boolean", "default": false }
+    ]
+  }
+}

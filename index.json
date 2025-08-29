@@ -1,26 +1,36 @@
 {
+  "repoName": "Slice&Burn Official",
+  "repoVersion": "1.0.0",
   "plugins": [
     {
       "id": "octoprint",
       "name": "OctoPrint",
-      "description": "Send G-code directly to OctoPrint instances.",
+      "summary": "Send G-code directly to OctoPrint instances.",
       "icon": "plugins/octoprint/icon.png",
-      "script": "plugins/octoprint/plugin.js",
-      "details": "plugins/octoprint/description.md",
+      "manifest": "plugins/octoprint/plugin.json",
       "version": "1.0.0",
-      "requires": []
+      "categories": ["Integration", "Printing"],
+      "author": "ChilSoft"
     }
   ],
   "themes": [
-    { "name": "Blue.css",  "path": "themes/Blue.css"  },
-    { "name": "Green.css", "path": "themes/Green.css" },
-    { "name": "Gold.css", "path": "themes/Gold.css" },
-    { "name": "Cyan", "path": "themes/Cyan.css" },
-    { "name": "Gray", "path": "themes/Gray.css" },
-    { "name": "Orange", "path": "themes/Orange.css" },
-    { "name": "Pink", "path": "themes/Pink.css" },
-    { "name": "Purple", "path": "themes/Purple.css" },
-    { "name": "Red", "path": "themes/Red.css" },
-    { "name": "Teal",  "path": "themes/Teal.css"  }
+    {
+      "id": "Blue",
+      "name": "Blue",
+      "summary": "Cool blues with bright accents.",
+      "preview": "themes/Blue/preview.png",
+      "manifest": "themes/Blue/theme.json",
+      "version": "1.0.0",
+      "author": "ChilSoft"
+    },
+    {
+      "id": "Green",
+      "name": "Green",
+      "summary": "Fresh green palette for long sessions.",
+      "preview": "themes/Green/preview.png",
+      "manifest": "themes/Green/theme.json",
+      "version": "1.0.0",
+      "author": "ChilSoft"
+    }
   ]
 }
