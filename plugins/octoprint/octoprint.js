@@ -1,205 +1,261 @@
-/* global window, document, SB, SB_Store */
-
-/**
- * OctoPrint plugin
- * - Built-in plugin
- * - Contributes a settings tab (lists instances with Add/Edit/Delete)
- * - Dynamically injects/removes its own modal for Add/Edit
- * - Provides "Send to OctoPrint…" menu action
- */
-
+/* global window, document, SB, localStorage, fetch */
 (function(){
-  const Store = SB_Store;
+  'use strict';
 
-  // ----- persistent state under SB.settings['octoprint'] -----
-  function getState(){
-    const all = Store.get('sb:settings', {});
-    return (all['octoprint'] ||= { instances: [] });
+  // ---- helpers ---------------------------------------------------
+  const PID = 'octoprint';
+
+  function getAllSettings(){
+    const all = (SB.settings || {});
+    if (!all[PID]) all[PID] = { instances: [] };
+    if (!Array.isArray(all[PID].instances)) all[PID].instances = [];
+    return all;
   }
-  function setState(next){
-    const all = Store.get('sb:settings', {});
-    all['octoprint'] = next;
-    Store.set('sb:settings', all);
+  function getS(){ return getAllSettings()[PID]; }
+  function saveS(next){
+    const all = getAllSettings();
+    all[PID] = next;
+    SB.settings = all;
+    try { localStorage.setItem('sb:settings', JSON.stringify(all)); } catch(_){}
+    try { SB.plugins.get(PID)?.onSettings?.(next); } catch(_){}
   }
+  function toast(text){ try { window.postMessage({ type:'sb:native:toast', text }, '*'); } catch(_) {} }
 
-  // optional schema so host gives us a tab label (we render a custom panel)
-  const schema = { title: 'OctoPrint', fields: [] };
+  // Simple id
+  function uid(){ return 'o_' + Math.random().toString(36).slice(2,10); }
 
-  // ---- Modal creation / teardown (dynamic) ----
-  function buildModal() {
+  // Modal builder (self-contained)
+  function showModal({ title, body, primaryText='Save', onPrimary, secondaryText='Cancel', onSecondary }){
     const wrap = document.createElement('div');
     wrap.className = 'modal';
     wrap.innerHTML = `
-      <div class="modal-card">
-        <div class="modal-title"><span id="octo-modal-title">OctoPrint</span></div>
-        <div class="modal-body" style="padding:12px">
-          <div class="card">
-            <label>Name <input id="op-name" /></label>
-            <label>Base URL (e.g. https://printer.local) <input id="op-url" placeholder="https://..."/></label>
-            <label>API Key <input id="op-key" placeholder="••••••••"/></label>
-            <label>Default?
-              <select id="op-default">
-                <option value="no">No</option>
-                <option value="yes">Yes</option>
-              </select>
-            </label>
-          </div>
-        </div>
+      <div class="modal-card" style="max-width:560px">
+        <div class="modal-title"><span>${title}</span></div>
+        <div class="modal-body" style="padding:12px"></div>
         <div class="modal-footer">
-          <button id="octo-cancel" class="btn">Cancel</button>
-          <button id="octo-save" class="btn primary">Save</button>
+          <button class="btn" data-act="secondary">${secondaryText}</button>
+          <button class="btn primary" data-act="primary">${primaryText}</button>
         </div>
-      </div>
-    `;
-    return wrap;
-  }
-
-  function openEditor(index=null, refreshListCb=()=>{}){
-    const st = getState();
-    const modal = buildModal();
-    const omTitle   = modal.querySelector('#octo-modal-title');
-    const opName    = modal.querySelector('#op-name');
-    const opUrl     = modal.querySelector('#op-url');
-    const opKey     = modal.querySelector('#op-key');
-    const opDefault = modal.querySelector('#op-default');
-    const omCancel  = modal.querySelector('#octo-cancel');
-    const omSave    = modal.querySelector('#octo-save');
-
-    const isEdit = Number.isInteger(index);
-    omTitle.textContent = isEdit ? 'Edit OctoPrint' : 'Add OctoPrint';
-
-    const src = isEdit ? st.instances[index] : { name:'', url:'', key:'', default: st.instances.length===0 };
-    opName.value    = src.name || '';
-    opUrl.value     = src.url || '';
-    opKey.value     = src.key || '';
-    opDefault.value = (src.default ? 'yes' : 'no');
-
-    function close(){
-      document.body.removeChild(modal);
-    }
-
-    omCancel.addEventListener('click', close);
-    modal.addEventListener('click', (e)=>{ if (e.target===modal) close(); });
-
-    omSave.addEventListener('click', ()=>{
-      const model = {
-        name: opName.value.trim(),
-        url: opUrl.value.trim(),
-        key: opKey.value.trim(),
-        default: (opDefault.value === 'yes')
-      };
-
-      // single default enforcement
-      if (model.default) st.instances.forEach(o => o.default = false);
-
-      if (isEdit) st.instances[index] = model;
-      else {
-        if (!st.instances.some(o => o.default)) model.default = true;
-        st.instances.push(model);
-      }
-      setState(st);
-      close();
-      refreshListCb(); // re-render list in settings panel
+      </div>`;
+    wrap.querySelector('.modal-body').appendChild(body);
+    function close(){ document.body.removeChild(wrap); }
+    wrap.addEventListener('click', (e)=>{ if (e.target === wrap) close(); });
+    wrap.querySelector('[data-act="secondary"]').addEventListener('click', ()=>{
+      try { onSecondary && onSecondary(); } finally { close(); }
     });
-
-    document.body.appendChild(modal);
+    wrap.querySelector('[data-act="primary"]').addEventListener('click', async ()=>{
+      const ok = (onPrimary ? await onPrimary() : true);
+      if (ok !== false) close();
+    });
+    document.body.appendChild(wrap);
   }
 
-  // ---- Register plugin with SB host ----
+  // Instance editor form
+  function buildInstanceForm(model){
+    const root = document.createElement('div');
+    root.className = 'card';
+    root.innerHTML = `
+      <label>Name <input id="op-name" value="${model.name||''}" placeholder="Office MK3S"/></label>
+      <label>Base URL <input id="op-url" value="${model.url||''}" placeholder="https://printer.local"/></label>
+      <label>API Key <input id="op-key" value="${model.key||''}" placeholder="••••••••"/></label>
+      <label>Default?
+        <select id="op-default">
+          <option value="no"${model.default?'':' selected'}>No</option>
+          <option value="yes"${model.default?' selected':''}>Yes</option>
+        </select>
+      </label>`;
+    return {
+      el: root,
+      read: () => ({
+        id: model.id || uid(),
+        name: root.querySelector('#op-name').value.trim(),
+        url:  root.querySelector('#op-url').value.trim(),
+        key:  root.querySelector('#op-key').value.trim(),
+        default: root.querySelector('#op-default').value === 'yes'
+      })
+    };
+  }
+
+  // Picker modal for Send to…
+  function showPicker(instances, onPick){
+    const body = document.createElement('div');
+    const list = document.createElement('div');
+    instances.forEach(i=>{
+      const row = document.createElement('div');
+      row.className = 'machine-row';
+      row.innerHTML = `<div><strong>${i.name||i.url}</strong><div style="opacity:.7">${i.url}</div></div>
+                       <button class="btn primary" data-id="${i.id}">Send</button>`;
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+    showModal({
+      title: 'Send to OctoPrint',
+      body,
+      primaryText: 'Close',
+      onPrimary(){},
+      secondaryText: 'Cancel',
+      onSecondary(){},
+    });
+    list.addEventListener('click', (e)=>{
+      const id = e.target?.getAttribute?.('data-id');
+      if (!id) return;
+      const inst = instances.find(x=>x.id===id);
+      if (inst) onPick(inst);
+    });
+  }
+
+  // Dummy send (wire real HTTP later)
+  async function sendGCode(instance, data){
+    // data = { gcode:String } or whatever your slicer passes via events
+    console.log('[octoprint] would send to', instance, data);
+    toast(`(Demo) Sent to ${instance.name||instance.url}`);
+  }
+
+  // ---- plugin registration --------------------------------------
   SB.register({
-    id: 'octoprint',
+    id: PID,
     name: 'OctoPrint',
-    builtIn: true,
-    schema,
+    builtIn: false,        // marketplace or user plugin
 
-    onSettings(s){
-      // normalize shape if user had older settings
-      if (!s || !Array.isArray(s.instances)) {
-        const st = getState();
-        setState(st);
-      }
+    // optional: expose a schema to appear under a dedicated tab
+    schema: {
+      title: 'OctoPrint',
+      fields: [] // we’ll render a richer custom panel below instead
     },
 
-    onInit(){
-      // add main menu action
-      SB.addMenuItem({
-        id: 'send-octoprint',
-        label: 'Send to OctoPrint…',
-        whenEnabledOf: ['slicer','laser','octoprint'],
-        onTap: async () => {
-          const st = getState();
-          if (!st.instances.length) {
-            alert('No OctoPrint instances configured. Add one in Settings → OctoPrint.');
-            return;
-          }
-          let target = st.instances.find(x=>x.default) || st.instances[0];
-          if (st.instances.length > 1) {
-            const names = st.instances.map((x,i)=> `${i+1}. ${x.name} (${x.url})`).join('\n');
-            const pick = prompt(`Send to which OctoPrint?\n${names}\nEnter number:`, '1');
-            const idx = Math.max(1, Math.min(st.instances.length, parseInt(pick||'1',10))) - 1;
-            target = st.instances[idx];
-          }
-          // TODO: package G-code and POST to OctoPrint REST API with X-Api-Key header
-          console.log('[OctoPrint] would send to', target);
-          alert(`(Demo) Would send G-code to ${target.name} at ${target.url}`);
-        }
-      });
-    },
+    // Settings tab content (custom builder)
+    buildSettingsPanel(ctx){
+      // ctx: { settings, save(next) }
+      const s = getS();
+      const wrap = document.createElement('div');
 
-    /**
-     * Custom settings tab content
-     * Host calls this when the plugin is enabled and its tab is active.
-     */
-    buildSettingsPanel(api){
-      // api = { settings, save(next) }  — we store state in sb:settings under 'octoprint'
-      const st = getState();
-      const root = document.createElement('div');
-
-      const header = document.createElement('div'); header.className = 'section';
-      header.innerHTML = `<h3>OctoPrint</h3>`;
-      root.appendChild(header);
-
+      const sec = document.createElement('div'); sec.className = 'section';
       const card = document.createElement('div'); card.className = 'card';
-      root.appendChild(card);
-
-      const list = document.createElement('div'); list.id = 'octo-list';
-      const btnAdd = document.createElement('button'); btnAdd.className='btn primary'; btnAdd.textContent='Add OctoPrint';
-      card.appendChild(list);
-      card.appendChild(btnAdd);
+      const list = document.createElement('div'); list.id = 'op-list';
+      const add  = document.createElement('button'); add.className = 'btn primary'; add.textContent = 'Add Instance';
+      card.appendChild(list); card.appendChild(add);
+      sec.appendChild(card); wrap.appendChild(sec);
 
       function render(){
-        const curr = getState(); // refresh from store so we’re always current
+        const cur = getS().instances;
         list.innerHTML = '';
-        (curr.instances||[]).forEach((o, idx)=>{
-          const row = document.createElement('div'); row.className='machine-row';
-          const isDefault = (o.default === true);
+        if (!cur.length){
+          const empty = document.createElement('div');
+          empty.style.opacity = '.7';
+          empty.textContent = 'No instances yet.';
+          list.appendChild(empty);
+        }
+        cur.forEach((m, idx)=>{
+          const row = document.createElement('div');
+          row.className = 'machine-row';
           row.innerHTML = `
             <div>
-              <strong>${o.name || 'Unnamed'}</strong>
-              <span style="opacity:.7">(${o.url || ''})</span>
-              ${isDefault ? '<span style="margin-left:6px;padding:2px 6px;border:1px solid var(--line);border-radius:999px;font-size:12px;opacity:.8">Default</span>':''}
+              <strong>${m.name || '(unnamed)'}</strong>
+              <span style="opacity:.7;margin-left:6px">${m.url||''}</span>
+              ${m.default?'<span style="margin-left:8px;opacity:.7">(default)</span>':''}
             </div>
-            <div class="machine-actions">
-              <button class="btn" data-act="edit">Edit</button>
-              <button class="btn" data-act="delete">Delete</button>
-            </div>
-          `;
-          row.querySelector('[data-act="edit"]').addEventListener('click', ()=> openEditor(idx, render));
-          row.querySelector('[data-act="delete"]').addEventListener('click', ()=>{
-            const next = getState();
-            next.instances.splice(idx,1);
-            if (!next.instances.some(e => e.default) && next.instances.length>0) next.instances[0].default = true;
-            setState(next);
-            render();
-          });
+            <div>
+              <button class="btn" data-act="default" data-i="${idx}">Set Default</button>
+              <button class="btn" data-act="edit" data-i="${idx}">Edit</button>
+              <button class="btn" data-act="del" data-i="${idx}">Delete</button>
+            </div>`;
           list.appendChild(row);
         });
       }
-
-      btnAdd.addEventListener('click', ()=> openEditor(null, render));
       render();
-      return root;
-    }
+
+      add.addEventListener('click', ()=>{
+        const form = buildInstanceForm({ default: !getS().instances.length });
+        showModal({
+          title: 'Add OctoPrint',
+          body: form.el,
+          onPrimary: ()=>{
+            const model = form.read();
+            const st = getS();
+            if (model.default) st.instances.forEach(i=> i.default=false);
+            st.instances.push(model);
+            saveS(st);
+            render();
+          }
+        });
+      });
+
+      list.addEventListener('click', (e)=>{
+        const act = e.target?.getAttribute?.('data-act');
+        const i   = Number(e.target?.getAttribute?.('data-i'));
+        if (!act || Number.isNaN(i)) return;
+        const st = getS();
+        const cur = st.instances[i];
+        if (!cur) return;
+
+        if (act === 'edit'){
+          const form = buildInstanceForm(cur);
+          showModal({
+            title: 'Edit OctoPrint',
+            body: form.el,
+            onPrimary: ()=>{
+              const m = form.read();
+              if (m.default) st.instances.forEach((x,ix)=>{ if (ix!==i) x.default=false; });
+              st.instances[i] = m;
+              saveS(st); render();
+            }
+          });
+        } else if (act === 'del'){
+          st.instances.splice(i,1);
+          // ensure one default if any remain
+          if (st.instances.length && !st.instances.some(x=>x.default)) st.instances[0].default = true;
+          saveS(st); render();
+        } else if (act === 'default'){
+          st.instances.forEach((x,ix)=> x.default = (ix===i));
+          saveS(st); render();
+        }
+      });
+
+      return wrap;
+    },
+
+    // Menu item
+    onInit(){
+      // Requires SB.addMenuItem from your core helpers
+      SB.addMenuItem?.({
+        id: 'octo-send',
+        pluginId: PID,
+        label: 'Send to OctoPrint…',
+        iconSvg: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM13 4h-2v7H8l4 4 4-4h-3V4z"/></svg>',
+        // visible whenever slicer _or_ laser is enabled
+        whenEnabledOf: ['slicer','laser'],
+        onTap: async () => {
+          const inst = getS().instances;
+          if (!inst.length) { toast('Add an OctoPrint instance in Settings > OctoPrint'); return; }
+
+          // If exactly one, send immediately
+          const target = inst.find(i=>i.default) || inst[0];
+          if (inst.length === 1) {
+            await sendGCode(target, { gcode: '; demo\nG28\n' });
+            return;
+          }
+
+          // Otherwise, picker
+          showPicker(inst, async (picked)=>{
+            await sendGCode(picked, { gcode: '; demo\nG28\n' });
+          });
+        }
+      });
+
+      // Optionally expose an action other plugins can call
+      SB.plugins.get(PID).actions = {
+        send(payload) {
+          const inst = getS().instances;
+          if (!inst.length) { toast('No OctoPrint instances configured'); return; }
+          const target = inst.find(i=>i.default) || inst[0];
+          sendGCode(target, payload);
+        }
+      };
+    },
+
+    onEnable(){},
+    onDisable(){},
+    onSettings(next){ /* settings persisted via saveS; nothing extra here */ }
   });
 
 })();
